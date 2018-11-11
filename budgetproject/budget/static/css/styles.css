@@ -1,0 +1,72 @@
+@import url('https://fonts.googleapis.com/css?family=Montserrat');
+
+/* General */
+html {
+  font-family: 'Montserrat';
+  background-color: #E0E0E0;
+}
+h1, h6 {
+  font-weight: bold;
+}
+.bold {
+  font-weight: bold;
+}
+.row {
+  margin: 0!important;
+}
+.row .col {
+  padding-left: 0!important;
+}
+
+/* project list (no projects) */
+.noproject-wrapper {
+  margin-top: 250px;
+  padding: 80px 0px;
+  border: 6px solid #9e9e9e;
+  border-style: dashed;
+}
+.noproject-wrapper h3 {
+  padding: 10px;
+  margin-bottom: 50px;
+}
+
+/* project add view */
+form ul li.category {
+  display: inline-block;
+  background-color: white;
+  padding: 5px 10px;
+  margin-right: 5px;
+}
+
+/* project detail statistics */
+.section-stats h1 {
+  font-size: 4vw;
+  margin: 15px 0px;
+}
+@media(max-width: 992px){
+  .section-stats h1 {
+    font-size: calc(16px + 6vw);
+  }
+}
+
+/* project detail expenses */
+.section-expenses button {
+  padding: 0px 40px;
+  font-weight: bold;
+  text-shadow: 0px 3px 4px rgba(0, 0, 0, .25);
+  background-color: #6FCF97;
+}
+.section-expenses .expense {
+  font-size: 16px;
+  border-radius: 0;
+  margin: 0;
+}
+.section-expenses .expense .category {
+  font-size: 13px;
+}
+.section-expenses li:nth-child(even) .expense {
+  background-color: #F2F2F2;
+}
+.section-expenses .close-icon:hover {
+  cursor: pointer;
+}
