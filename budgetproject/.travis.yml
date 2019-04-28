@@ -1,0 +1,14 @@
+language: python
+
+python:
+  - "3.6"
+
+#commands to install dependencies
+install:
+  - pip install -q Django==$DJANGO
+  - pip install -q -r requirements.txt
+
+
+#command to run the test suite
+script:
+  - python manage.py test
