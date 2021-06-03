@@ -1,17 +1,15 @@
-import warnings
 from decimal import Decimal
 
 from django.contrib.gis.db.models.fields import BaseSpatialField, GeometryField
 from django.contrib.gis.db.models.sql import AreaField, DistanceField
 from django.contrib.gis.geos import GEOSGeometry
 from django.core.exceptions import FieldError
+from django.db import NotSupportedError
 from django.db.models import (
-    BooleanField, FloatField, IntegerField, TextField, Transform,
+    BinaryField, BooleanField, FloatField, Func, IntegerField, TextField,
+    Transform, Value,
 )
-from django.db.models.expressions import Func, Value
 from django.db.models.functions import Cast
-from django.db.utils import NotSupportedError
-from django.utils.deprecation import RemovedInDjango30Warning
 from django.utils.functional import cached_property
 
 NUMERIC_TYPES = (int, float, Decimal)
@@ -50,7 +48,7 @@ class GeoFuncMixin:
         return self.source_expressions[self.geom_param_pos[0]].field
 
     def as_sql(self, compiler, connection, function=None, **extra_context):
-        if not self.function and not function:
+        if self.function is None and function is None:
             function = connection.ops.spatial_function_name(self.name)
         return super().as_sql(compiler, connection, function=function, **extra_context)
 
@@ -102,19 +100,28 @@ class SQLiteDecimalToFloatMixin:
     By default, Decimal values are converted to str by the SQLite backend, which
     is not acceptable by the GIS functions expecting numeric values.
     """
-    def as_sqlite(self, compiler, connection):
-        for expr in self.get_source_expressions():
-            if hasattr(expr, 'value') and isinstance(expr.value, Decimal):
-                expr.value = float(expr.value)
-        return super().as_sql(compiler, connection)
+    def as_sqlite(self, compiler, connection, **extra_context):
+        copy = self.copy()
+        copy.set_source_expressions([
+            Value(float(expr.value)) if hasattr(expr, 'value') and isinstance(expr.value, Decimal)
+            else expr
+            for expr in copy.get_source_expressions()
+        ])
+        return copy.as_sql(compiler, connection, **extra_context)
 
 
 class OracleToleranceMixin:
     tolerance = 0.05
 
-    def as_oracle(self, compiler, connection):
-        tol = self.extra.get('tolerance', self.tolerance)
-        return self.as_sql(compiler, connection, template="%%(function)s(%%(expressions)s, %s)" % tol)
+    def as_oracle(self, compiler, connection, **extra_context):
+        tolerance = Value(self._handle_param(
+            self.extra.get('tolerance', self.tolerance),
+            'tolerance',
+            NUMERIC_TYPES,
+        ))
+        clone = self.copy()
+        clone.set_source_expressions([*self.get_source_expressions(), tolerance])
+        return clone.as_sql(compiler, connection, **extra_context)
 
 
 class Area(OracleToleranceMixin, GeoFunc):
@@ -160,6 +167,12 @@ class AsGeoJSON(GeoFunc):
             expressions.append(options)
         super().__init__(*expressions, **extra)
 
+    def as_oracle(self, compiler, connection, **extra_context):
+        source_expressions = self.get_source_expressions()
+        clone = self.copy()
+        clone.set_source_expressions(source_expressions[:1])
+        return super(AsGeoJSON, clone).as_sql(compiler, connection, **extra_context)
+
 
 class AsGML(GeoFunc):
     geom_param_pos = (1,)
@@ -180,12 +193,14 @@ class AsGML(GeoFunc):
         return super(AsGML, clone).as_sql(compiler, connection, **extra_context)
 
 
-class AsKML(AsGML):
-    def as_sqlite(self, compiler, connection):
-        # No version parameter
-        clone = self.copy()
-        clone.set_source_expressions(self.get_source_expressions()[1:])
-        return clone.as_sql(compiler, connection)
+class AsKML(GeoFunc):
+    output_field = TextField()
+
+    def __init__(self, expression, precision=8, **extra):
+        expressions = [expression]
+        if precision is not None:
+            expressions.append(self._handle_param(precision, 'precision', int))
+        super().__init__(*expressions, **extra)
 
 
 class AsSVG(GeoFunc):
@@ -201,14 +216,24 @@ class AsSVG(GeoFunc):
         super().__init__(*expressions, **extra)
 
 
-class BoundingCircle(OracleToleranceMixin, GeoFunc):
+class AsWKB(GeoFunc):
+    output_field = BinaryField()
+    arity = 1
+
+
+class AsWKT(GeoFunc):
+    output_field = TextField()
+    arity = 1
+
+
+class BoundingCircle(OracleToleranceMixin, GeomOutputGeoFunc):
     def __init__(self, expression, num_seg=48, **extra):
         super().__init__(expression, num_seg, **extra)
 
-    def as_oracle(self, compiler, connection):
+    def as_oracle(self, compiler, connection, **extra_context):
         clone = self.copy()
         clone.set_source_expressions([self.get_source_expressions()[0]])
-        return super(BoundingCircle, clone).as_oracle(compiler, connection)
+        return super(BoundingCircle, clone).as_oracle(compiler, connection, **extra_context)
 
 
 class Centroid(OracleToleranceMixin, GeomOutputGeoFunc):
@@ -239,7 +264,7 @@ class Distance(DistanceResultMixin, OracleToleranceMixin, GeoFunc):
             self.spheroid = self._handle_param(spheroid, 'spheroid', bool)
         super().__init__(*expressions, **extra)
 
-    def as_postgresql(self, compiler, connection):
+    def as_postgresql(self, compiler, connection, **extra_context):
         clone = self.copy()
         function = None
         expr2 = clone.source_expressions[1]
@@ -262,7 +287,7 @@ class Distance(DistanceResultMixin, OracleToleranceMixin, GeoFunc):
                 clone.source_expressions.append(Value(self.geo_field.spheroid(connection)))
             else:
                 function = connection.ops.spatial_function_name('DistanceSphere')
-        return super(Distance, clone).as_sql(compiler, connection, function=function)
+        return super(Distance, clone).as_sql(compiler, connection, function=function, **extra_context)
 
     def as_sqlite(self, compiler, connection, **extra_context):
         if self.geo_field.geodetic(connection):
@@ -280,17 +305,6 @@ class ForcePolygonCW(GeomOutputGeoFunc):
     arity = 1
 
 
-class ForceRHR(GeomOutputGeoFunc):
-    arity = 1
-
-    def __init__(self, *args, **kwargs):
-        warnings.warn(
-            'ForceRHR is deprecated in favor of ForcePolygonCW.',
-            RemovedInDjango30Warning, stacklevel=2,
-        )
-        super().__init__(*args, **kwargs)
-
-
 class GeoHash(GeoFunc):
     output_field = TextField()
 
@@ -300,12 +314,20 @@ class GeoHash(GeoFunc):
             expressions.append(self._handle_param(precision, 'precision', int))
         super().__init__(*expressions, **extra)
 
-    def as_mysql(self, compiler, connection):
+    def as_mysql(self, compiler, connection, **extra_context):
         clone = self.copy()
         # If no precision is provided, set it to the maximum.
         if len(clone.source_expressions) < 2:
             clone.source_expressions.append(Value(100))
-        return clone.as_sql(compiler, connection)
+        return clone.as_sql(compiler, connection, **extra_context)
+
+
+class GeometryDistance(GeoFunc):
+    output_field = FloatField()
+    arity = 2
+    function = ''
+    arg_joiner = ' <-> '
+    geom_param_pos = (0, 1)
 
 
 class Intersection(OracleToleranceMixin, GeomOutputGeoFunc):
@@ -333,7 +355,7 @@ class Length(DistanceResultMixin, OracleToleranceMixin, GeoFunc):
             raise NotSupportedError("This backend doesn't support Length on geodetic fields")
         return super().as_sql(compiler, connection, **extra_context)
 
-    def as_postgresql(self, compiler, connection):
+    def as_postgresql(self, compiler, connection, **extra_context):
         clone = self.copy()
         function = None
         if self.source_is_geography():
@@ -346,13 +368,13 @@ class Length(DistanceResultMixin, OracleToleranceMixin, GeoFunc):
             dim = min(f.dim for f in self.get_source_fields() if f)
             if dim > 2:
                 function = connection.ops.length3d
-        return super(Length, clone).as_sql(compiler, connection, function=function)
+        return super(Length, clone).as_sql(compiler, connection, function=function, **extra_context)
 
-    def as_sqlite(self, compiler, connection):
+    def as_sqlite(self, compiler, connection, **extra_context):
         function = None
         if self.geo_field.geodetic(connection):
             function = 'GeodesicLength' if self.spheroid else 'GreatCircleLength'
-        return super().as_sql(compiler, connection, function=function)
+        return super().as_sql(compiler, connection, function=function, **extra_context)
 
 
 class LineLocatePoint(GeoFunc):
@@ -361,7 +383,7 @@ class LineLocatePoint(GeoFunc):
     geom_param_pos = (0, 1)
 
 
-class MakeValid(GeoFunc):
+class MakeValid(GeomOutputGeoFunc):
     pass
 
 
@@ -383,19 +405,19 @@ class NumPoints(GeoFunc):
 class Perimeter(DistanceResultMixin, OracleToleranceMixin, GeoFunc):
     arity = 1
 
-    def as_postgresql(self, compiler, connection):
+    def as_postgresql(self, compiler, connection, **extra_context):
         function = None
         if self.geo_field.geodetic(connection) and not self.source_is_geography():
             raise NotSupportedError("ST_Perimeter cannot use a non-projected non-geography field.")
         dim = min(f.dim for f in self.get_source_fields())
         if dim > 2:
             function = connection.ops.perimeter3d
-        return super().as_sql(compiler, connection, function=function)
+        return super().as_sql(compiler, connection, function=function, **extra_context)
 
-    def as_sqlite(self, compiler, connection):
+    def as_sqlite(self, compiler, connection, **extra_context):
         if self.geo_field.geodetic(connection):
             raise NotSupportedError("Perimeter cannot use a non-projected field.")
-        return super().as_sql(compiler, connection)
+        return super().as_sql(compiler, connection, **extra_context)
 
 
 class PointOnSurface(OracleToleranceMixin, GeomOutputGeoFunc):
@@ -454,12 +476,12 @@ class Transform(GeomOutputGeoFunc):
 
 
 class Translate(Scale):
-    def as_sqlite(self, compiler, connection):
+    def as_sqlite(self, compiler, connection, **extra_context):
         clone = self.copy()
         if len(self.source_expressions) < 4:
             # Always provide the z parameter for ST_Translate
             clone.source_expressions.append(Value(0))
-        return super(Translate, clone).as_sqlite(compiler, connection)
+        return super(Translate, clone).as_sqlite(compiler, connection, **extra_context)
 
 
 class Union(OracleToleranceMixin, GeomOutputGeoFunc):

@@ -43,7 +43,7 @@ class BaseContext:
         return repr(self.dicts)
 
     def __iter__(self):
-        yield from reversed(self.dicts)
+        return reversed(self.dicts)
 
     def push(self, *args, **kwargs):
         dicts = []
@@ -124,12 +124,10 @@ class BaseContext:
         """
         Compare two contexts by comparing theirs 'dicts' attributes.
         """
-        return (
-            isinstance(other, BaseContext) and
-            # because dictionaries can be put in different order
-            # we have to flatten them like in templates
-            self.flatten() == other.flatten()
-        )
+        if not isinstance(other, BaseContext):
+            return NotImplemented
+        # flatten dictionaries because they can be put in a different order.
+        return self.flatten() == other.flatten()
 
 
 class Context(BaseContext):

@@ -4,6 +4,7 @@ not in INSTALLED_APPS.
 """
 import unicodedata
 
+from django.conf import settings
 from django.contrib.auth import password_validation
 from django.contrib.auth.hashers import (
     check_password, is_password_usable, make_password,
@@ -59,21 +60,21 @@ class AbstractBaseUser(models.Model):
     class Meta:
         abstract = True
 
-    def get_username(self):
-        "Return the identifying username for this User"
-        return getattr(self, self.USERNAME_FIELD)
-
     def __str__(self):
         return self.get_username()
-
-    def clean(self):
-        setattr(self, self.USERNAME_FIELD, self.normalize_username(self.get_username()))
 
     def save(self, *args, **kwargs):
         super().save(*args, **kwargs)
         if self._password is not None:
             password_validation.password_changed(self._password, self)
             self._password = None
+
+    def get_username(self):
+        """Return the username for this User."""
+        return getattr(self, self.USERNAME_FIELD)
+
+    def clean(self):
+        setattr(self, self.USERNAME_FIELD, self.normalize_username(self.get_username()))
 
     def natural_key(self):
         return (self.get_username(),)
@@ -120,12 +121,24 @@ class AbstractBaseUser(models.Model):
         """
         return is_password_usable(self.password)
 
+    def _legacy_get_session_auth_hash(self):
+        # RemovedInDjango40Warning: pre-Django 3.1 hashes will be invalid.
+        key_salt = 'django.contrib.auth.models.AbstractBaseUser.get_session_auth_hash'
+        return salted_hmac(key_salt, self.password, algorithm='sha1').hexdigest()
+
     def get_session_auth_hash(self):
         """
         Return an HMAC of the password field.
         """
         key_salt = "django.contrib.auth.models.AbstractBaseUser.get_session_auth_hash"
-        return salted_hmac(key_salt, self.password).hexdigest()
+        return salted_hmac(
+            key_salt,
+            self.password,
+            # RemovedInDjango40Warning: when the deprecation ends, replace
+            # with:
+            # algorithm='sha256',
+            algorithm=settings.DEFAULT_HASHING_ALGORITHM,
+        ).hexdigest()
 
     @classmethod
     def get_email_field_name(cls):
