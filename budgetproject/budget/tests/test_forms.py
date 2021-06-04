@@ -10,3 +10,9 @@ class TestForms:
         })
 
         assert form.is_valid() == True
+
+    def test_not_valid_data(self):
+        form =ExpenseForm(data={})
+
+        assert form.is_valid() == False
+        assert len(form.errors) == 3
