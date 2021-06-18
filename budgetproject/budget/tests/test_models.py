@@ -2,6 +2,7 @@ from budget.models import Project, Category, Expense
 import pytest
 from django.test import TestCase
 
+@pytest.mark.django_db
 class TestModels(TestCase):
 
     @classmethod

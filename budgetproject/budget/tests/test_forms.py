@@ -1,6 +1,9 @@
 from budget.forms import ExpenseForm
 from django.test import TestCase
+import pytest
 
+
+@pytest.mark.django_db
 class TestForms(TestCase):
 
     def test_valid_data(self):

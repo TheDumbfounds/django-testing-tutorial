@@ -91,7 +91,7 @@ class TestViews(TestCase):
         response = self.client.post(self.create_url,{
             'name' : 'project2',
             'budget' : 10000,
-            'categoriesString' : 'design'
+            'categoriesString' : 'design,deployment'
         })
 
         project2= Project.objects.get(id=2)
@@ -99,3 +99,6 @@ class TestViews(TestCase):
         first_category = Category.objects.get(id=1)
         assert first_category.project == project2
         assert first_category.name == 'design'
+        second_category = Category.objects.get(id=2)
+        assert second_category.project == project2
+        assert second_category.name == 'deployment'
