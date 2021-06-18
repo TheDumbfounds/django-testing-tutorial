@@ -1,6 +1,7 @@
 from budget.forms import ExpenseForm
+from django.test import TestCase
 
-class TestForms:
+class TestForms(TestCase):
 
     def test_valid_data(self):
         form =ExpenseForm(data={

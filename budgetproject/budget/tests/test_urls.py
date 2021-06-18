@@ -1,6 +1,7 @@
 from django.urls import reverse, resolve
+from django.test import TestCase
 
-class TestUrls:
+class TestUrls(TestCase):
 
     def test_list_url(self):
         path = reverse('list')
