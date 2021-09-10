@@ -1,1 +1,1 @@
-# django-testing-tutorial
+# budget_app_testing
